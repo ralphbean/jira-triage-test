@@ -5,9 +5,18 @@ on:
     - cron: "*/5 * * * *"  # every 5 minutes
   workflow_dispatch: {}     # allow manual runs
 
+# Pinned to the fullsend-ai/fullsend commit that carries PR #6340
+# (CEL trigger evaluation for jira-poll). Update when merged to main.
+# Branch: agent/6339-cel-trigger-jira-poll
+env:
+  FULLSEND_REF: c1c02086a7d8fc944b7553aac6eebcfad3c7ae1c
+
 permissions:
   actions: write
   contents: read
+  id-token: write
+  issues: write
+  pull-requests: write
 
 jobs:
   poll:
@@ -15,6 +24,8 @@ jobs:
     concurrency:
       group: fullsend-jira-poll
       cancel-in-progress: false
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,7 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Use the vendored binary if present (Step 3), otherwise download
+          # Use the vendored binary if present (Step 3 of test plan).
           if [[ -x ".fullsend/bin/fullsend" ]]; then
             sudo cp .fullsend/bin/fullsend /usr/local/bin/fullsend
           else
@@ -36,74 +47,193 @@ jobs:
           JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
           JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          TARGET_REPO: ${{ github.repository }}
         run: |
           fullsend poll \
             --input-driver jira-poll \
             --jira-url "${JIRA_BASE_URL}" \
             --jira-project KONFLUX \
             --jql 'project=KONFLUX and statusCategory != Done and updated > -1week and type=Bug' \
-            --target-repo "${{ github.repository }}" \
+            --target-repo "${TARGET_REPO}" \
             --output dispatches.json \
             --fullsend-dir .fullsend
 
-      - name: Dispatch agent workflows
-        env:
-          GH_TOKEN: ${{ github.token }}
-          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+      - name: Build dispatch matrix
+        id: build-matrix
         run: |
           set -euo pipefail
-
           if ! jq -e 'length > 0' dispatches.json > /dev/null 2>&1; then
-            echo "No dispatches to process."
+            echo "No dispatches."
+            echo 'matrix={"include":[]}' >> "${GITHUB_OUTPUT}"
             exit 0
           fi
+          MATRIX=$(jq -c '{include: .}' dispatches.json)
+          DELIM="MATRIX_$(openssl rand -hex 8)"
+          {
+            echo "matrix<<${DELIM}"
+            printf '%s' "${MATRIX}"
+            echo
+            echo "${DELIM}"
+          } >> "${GITHUB_OUTPUT}"
 
-          dispatched=0
-          count=$(jq 'length' dispatches.json)
+  harness-run:
+    # Adapted from reusable-dispatch.yml harness-run job (fullsend-ai/fullsend).
+    # The poll job above replaces harness-dispatch: the CEL trigger matching is
+    # done by `fullsend poll` (PR #6340) and the matrix is pre-built from
+    # dispatches.json. We skip harness-dispatch entirely and feed the matrix
+    # directly here.
+    #
+    # TODO(fullsend-ai/fullsend#6347): refactor harness-run into a
+    # directly-addressable action so this copy can be replaced.
+    name: Harness run (${{ matrix.agent }})
+    needs: poll
+    if: ${{ needs.poll.outputs.matrix != '' && fromJSON(needs.poll.outputs.matrix).include[0] != null }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.poll.outputs.matrix) }}
+    concurrency:
+      group: fullsend-harness-${{ matrix.agent }}-${{ github.repository }}-${{ matrix.status_number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout config repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-          for i in $(seq 0 $((count - 1))); do
-            record=$(jq -c ".[$i]" dispatches.json)
-            STAGE=$(echo "$record" | jq -r '.stage')
-            RESOURCE_KEY=$(echo "$record" | jq -r '.resource_key')
-            EVENT_TYPE=$(echo "$record" | jq -r '.event_type')
-            ISSUE_ID=$(echo "$record" | jq -r '.iid // 0')
+      - name: Checkout upstream defaults
+        if: hashFiles('.defaults/action.yml', '.fullsend/.defaults/action.yml') == ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fullsend-ai/fullsend
+          ref: ${{ env.FULLSEND_REF }}
+          path: .defaults
+          fetch-depth: 1
+          sparse-checkout: |
+            .github/actions/
+            .github/scripts/
+            internal/scaffold/fullsend-repo/
+            action.yml
+          sparse-checkout-cone-mode: false
 
-            # Extract the Jira issue key from the resource key
-            # (e.g. "issue-PROJ-101" -> "PROJ-101").
-            ISSUE_KEY="${RESOURCE_KEY#issue-}"
-            ISSUE_URL="${JIRA_BASE_URL}/browse/${ISSUE_KEY}"
-
-            # Build a minimal event payload compatible with the scaffold
-            # agent workflows. The concurrency group uses
-            # fromJSON(event_payload).issue.number, so it must stay a
-            # number.
-            EVENT_PAYLOAD=$(jq -nc \
-              --argjson number "$ISSUE_ID" \
-              --arg url "$ISSUE_URL" \
-              '{issue: {number: $number, html_url: $url}}')
-
-            # Find the workflow file for this stage by scanning for the
-            # "# fullsend-stage: <stage>" marker in workflow files.
-            WORKFLOW_NAME=""
-            for wf in .github/workflows/*.yml .github/workflows/*.yaml; do
-              [[ -f "$wf" ]] || continue
-              if grep -qxF "# fullsend-stage: ${STAGE}" "$wf"; then
-                WORKFLOW_NAME=$(basename "$wf")
-                break
-              fi
-            done
-            if [[ -z "$WORKFLOW_NAME" ]]; then
-              echo "::warning::No workflow found for stage ${STAGE}, skipping ${RESOURCE_KEY}"
-              continue
+      - name: Prepare workspace (upstream defaults + repo overrides)
+        run: |
+          set -euo pipefail
+          SRC=".defaults/internal/scaffold/fullsend-repo"
+          LAYERED_DIRS="agents skills schemas harness plugins policies scripts env"
+          for dir in ${LAYERED_DIRS}; do
+            if [[ -d "${SRC}/${dir}" ]]; then
+              mkdir -p ".fullsend/${dir}"
+              cp -r "${SRC}/${dir}/." ".fullsend/${dir}/"
             fi
-
-            echo "Dispatching ${WORKFLOW_NAME} for ${ISSUE_KEY} (${STAGE})"
-            gh workflow run "$WORKFLOW_NAME" \
-              -f event_type="$EVENT_TYPE" \
-              -f source_repo="${{ github.repository }}" \
-              -f event_payload="$EVENT_PAYLOAD"
-
-            dispatched=$((dispatched + 1))
           done
+          mkdir -p .github/scripts
+          cp "${SRC}/.github/scripts/setup-agent-env.sh" .github/scripts/setup-agent-env.sh
 
-          echo "::notice::Dispatched ${dispatched} agent workflow(s)"
+      - name: Extract repo metadata
+        id: repo-parts
+        env:
+          SOURCE_REPO: ${{ matrix.source_repo }}
+        run: |
+          set -euo pipefail
+          echo "name=${SOURCE_REPO#*/}" >> "${GITHUB_OUTPUT}"
+
+      - name: Write dispatch event payload
+        env:
+          EVENT_PAYLOAD: ${{ matrix.event_payload }}
+        run: |
+          set -euo pipefail
+          mkdir -p .fullsend/dispatch
+          printf '%s' "${EVENT_PAYLOAD}" > .fullsend/dispatch/event-payload.json
+
+      - name: Mint agent token
+        id: app-token
+        uses: ./.defaults/.github/actions/mint-token
+        with:
+          role: ${{ matrix.role }}
+          repos: ${{ steps.repo-parts.outputs.name }}
+          mint_url: ${{ vars.FULLSEND_MINT_URL }}
+
+      - name: Checkout target repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.source_repo }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: target-repo
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup GCP and prepare credentials
+        uses: ./.defaults/.github/actions/setup-gcp
+        with:
+          gcp_wif_provider: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
+          gcp_project_id: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
+          fullsend-dir: .fullsend
+
+      - name: Setup agent environment
+        env:
+          MATRIX_ROLE: ${{ matrix.role }}
+          GCP_PROJECT: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.FULLSEND_GCP_REGION }}
+        run: |
+          set -euo pipefail
+          ROLE_UPPER=$(echo "${MATRIX_ROLE}" | tr '[:lower:]' '[:upper:]')
+          export AGENT_PREFIX="${ROLE_UPPER}_"
+          export "${ROLE_UPPER}_TARGET_REPO_DIR=target-repo"
+          export "${ROLE_UPPER}_ANTHROPIC_VERTEX_PROJECT_ID=${GCP_PROJECT}"
+          export "${ROLE_UPPER}_CLOUD_ML_REGION=${GCP_REGION}"
+          bash .github/scripts/setup-agent-env.sh
+
+      - name: Export dispatch context env
+        id: dispatch-env
+        env:
+          EVENT_PAYLOAD: ${{ matrix.event_payload }}
+        run: |
+          set -euo pipefail
+          URL=$(printf '%s' "${EVENT_PAYLOAD}" | jq -r '.issue.html_url // .pull_request.html_url // empty')
+          if [[ -z "${URL}" ]]; then
+            echo "::error::event_payload missing issue or pull_request html_url"
+            exit 1
+          fi
+          DELIM="ISSUE_URL_$(openssl rand -hex 8)"
+          {
+            echo "issue_url<<${DELIM}"
+            printf '%s' "${URL}"
+            echo
+            echo "${DELIM}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Run harness agent
+        uses: ./.defaults/
+        env:
+          # GITHUB_ISSUE_URL is the generic key action.yml reads; JIRA_ISSUE_URL
+          # is what forge.jira.env.runner in the harness expands ${JIRA_ISSUE_URL}
+          # from. Both point to the Jira issue URL extracted from event_payload.
+          GITHUB_ISSUE_URL: ${{ steps.dispatch-env.outputs.issue_url }}
+          JIRA_ISSUE_URL: ${{ steps.dispatch-env.outputs.issue_url }}
+          JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+          REPO_FULL_NAME: ${{ matrix.source_repo }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${{ vars.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_TRACES_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_TRACES_HEADERS }}
+          OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+          OTEL_EXPORTER_OTLP_CERTIFICATE: ${{ vars.OTEL_EXPORTER_OTLP_CERTIFICATE }}
+          OTEL_RESOURCE_ATTRIBUTES: ${{ vars.OTEL_RESOURCE_ATTRIBUTES }}
+          OTEL_SDK_DISABLED: ${{ vars.OTEL_SDK_DISABLED }}
+        with:
+          agent: ${{ matrix.agent }}
+          version: ${{ env.FULLSEND_REF }}
+          fullsend-dir: .fullsend
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          status-repo: ${{ matrix.status_repo }}
+          status-number: ${{ matrix.status_number }}
+          mint-url: ${{ vars.FULLSEND_MINT_URL }}
+          pr-head-sha: ${{ fromJSON(matrix.event_payload).pull_request.head.sha || '' }}
