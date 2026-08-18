@@ -40,7 +40,8 @@ jobs:
           fullsend poll \
             --input-driver jira-poll \
             --jira-url "${JIRA_BASE_URL}" \
-            --jira-project PROJ \
+            --jira-project KONFLUX \
+            --jql 'project=KONFLUX and statusCategory != Done and updated > -1week and type=Bug' \
             --target-repo "${{ github.repository }}" \
             --output dispatches.json \
             --fullsend-dir .fullsend
