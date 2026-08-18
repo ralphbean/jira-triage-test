@@ -53,57 +53,102 @@ automatically.
 
 The default enrollment ships the `main` branch of `fullsend-ai/agents`.
 The Jira triage support lives on the `jira` branch, so you need to
-override the triage harness URL to point at that branch.
+override the triage harness URL to point at that branch. You also need
+to configure Jira workflow transition names — these are project-specific
+configuration, not credentials, so they belong in the harness via
+`base:` composition rather than in CI secrets.
+
+### Register the upstream harness and pin the SHA
 
 The `agents:` list in `.fullsend/config.yaml` accepts raw GitHub URLs
-pinned with a SHA-256 integrity hash. Replace the default triage entry
-with one pointing at the `jira` branch:
+pinned with a SHA-256 integrity hash:
 
 ```bash
-# Get the SHA-256 of the harness file on the jira branch
+# Pin the jira branch harness via CLI (auto-computes SHA-256)
+fullsend agent add \
+  "https://github.com/fullsend-ai/agents/blob/jira/harness/triage.yaml" \
+  --fullsend-dir .fullsend
+```
+
+Or manually:
+
+```bash
 HARNESS_SHA=$(curl -sfL \
   "https://raw.githubusercontent.com/fullsend-ai/agents/jira/harness/triage.yaml" \
   | sha256sum | awk '{print $1}')
 echo "Harness SHA: ${HARNESS_SHA}"
 ```
 
-Then update (or create) `.fullsend/config.yaml`:
+### Jira transition defaults
+
+The upstream harness ships sensible defaults for Jira workflow
+transitions in `forge.jira.env.runner`:
+
+| Variable | Default |
+|----------|---------|
+| `JIRA_DUPLICATE_TRANSITION` | `Duplicate` |
+| `JIRA_NOT_PLANNED_TRANSITION` | `Not Planned` |
+| `JIRA_SPLIT_TRANSITION` | `Obsolete` |
+
+If these match your Jira project's workflow, no override is needed. If
+not, create a local harness override via `base:` composition.
+
+Create `.fullsend/harness/triage.yaml`:
+
+```yaml
+# .fullsend/harness/triage.yaml
+base: https://raw.githubusercontent.com/fullsend-ai/agents/jira/harness/triage.yaml#sha256=<HARNESS_SHA>
+
+forge:
+  jira:
+    env:
+      runner:
+        JIRA_DUPLICATE_TRANSITION: "Won't Do"
+        JIRA_NOT_PLANNED_TRANSITION: "Rejected"
+        JIRA_SPLIT_TRANSITION: "Done"
+```
+
+Replace `<HARNESS_SHA>` with the value from above.
+
+Then update `.fullsend/config.yaml` to point at the local harness
+instead of the upstream URL directly:
 
 ```yaml
 # .fullsend/config.yaml
 version: "1"
 agents:
-  # Override triage to use the jira branch instead of main
+  # Local harness that inherits from the jira branch via base: composition
+  - name: triage
+    source: harness/triage.yaml
+allowed_remote_resources:
+  - https://raw.githubusercontent.com/fullsend-ai/agents/
+```
+
+> **How this works:** `source: harness/triage.yaml` resolves relative to
+> the `.fullsend/` directory. That file's `base:` pulls in the full upstream
+> harness from the `jira` branch — `forge.jira` block, Jira skills,
+> scripts, and policies — then the local `forge.jira.env.runner` values
+> merge on top (child wins for env map keys).
+
+If the defaults are fine, skip the local harness and register the
+upstream URL directly in `config.yaml`:
+
+```yaml
+# .fullsend/config.yaml
+version: "1"
+agents:
   - https://raw.githubusercontent.com/fullsend-ai/agents/jira/harness/triage.yaml#sha256=<HARNESS_SHA>
 allowed_remote_resources:
   - https://raw.githubusercontent.com/fullsend-ai/agents/
 ```
 
-Replace `<HARNESS_SHA>` with the value from the curl command above.
-
-> **How this works:** When fullsend dispatches an agent, it resolves the
-> harness from URLs in the `agents:` list. On name collision, config-registered
-> agents take precedence over built-in agents, so this entry overrides the
-> stock triage harness. The URL points at the `jira` branch, so dispatch
-> picks up `harness/triage.yaml` with its `forge.jira` block, the Jira
-> skills, scripts, and policies from that branch. The `allowed_remote_resources`
-> entry authorizes fetching from the agents repo.
-
-You can also use the CLI to register the override:
-
-```bash
-fullsend agent add \
-  "https://github.com/fullsend-ai/agents/blob/jira/harness/triage.yaml" \
-  --fullsend-dir .fullsend
-```
-
-This auto-pins the SHA-256 and updates `allowed_remote_resources`.
-
 Commit and push:
 
 ```bash
 git add .fullsend/config.yaml
-git commit -m "pin triage harness to jira branch for testing"
+# If using local harness override:
+# git add .fullsend/harness/triage.yaml
+git commit -m "pin triage harness to jira branch"
 git push
 ```
 
@@ -338,9 +383,6 @@ environment, so the same secrets serve both the poller and the agent.
 |--------|-------|---------|
 | `JIRA_TOKEN` | Jira Cloud API token | `ATATT3x...` |
 | `JIRA_USER_EMAIL` | Email of the Jira API user | `bot@example.com` |
-| `JIRA_DUPLICATE_TRANSITION` | Jira transition name for duplicates | `Duplicate` |
-| `JIRA_NOT_PLANNED_TRANSITION` | Transition name for not-planned | `Won't Do` |
-| `JIRA_SPLIT_TRANSITION` | Transition name for splits | `Done` |
 
 ### Variables (Settings > Secrets and variables > Actions > Variables)
 
@@ -360,13 +402,13 @@ via GitHub OIDC.
 # Secrets
 gh secret set JIRA_TOKEN --body "<your-api-token>"
 gh secret set JIRA_USER_EMAIL --body "bot@example.com"
-gh secret set JIRA_DUPLICATE_TRANSITION --body "Duplicate"
-gh secret set JIRA_NOT_PLANNED_TRANSITION --body "Won't Do"
-gh secret set JIRA_SPLIT_TRANSITION --body "Done"
 
 # Variables
 gh variable set JIRA_BASE_URL --body "https://mysite.atlassian.net"
 ```
+
+Jira transition names (`JIRA_DUPLICATE_TRANSITION`, etc.) are configured
+in the harness override (Step 2), not here.
 
 ### Custom JQL (optional)
 
