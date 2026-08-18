@@ -4,6 +4,14 @@ base: https://raw.githubusercontent.com/fullsend-ai/agents/jira/harness/triage.y
 trigger: >
   event.source.system == "jira" && event.entity.kind == "work_item"
 
+# Workaround: LoadWithBase caches remote profile paths as content-addressed
+# files without .yaml extension, causing Validate() to fail. Pin these by
+# absolute URL+hash so they pass the URL integrity check instead of the
+# extension check. Remove once fullsend-ai/fullsend#XXXX is fixed.
+openshell:
+  profiles:
+    - https://raw.githubusercontent.com/fullsend-ai/agents/jira/profiles/fullsend-vertex-ai.yaml#sha256=347b2d794aef43e87a3e98331321ce90e3745d8e06627e4f64490d23407adcb6
+
 forge:
   jira:
     env:
