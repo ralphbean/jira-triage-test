@@ -113,7 +113,11 @@ git push
 
 If the `fullsend` CLI on the public release channel doesn't yet include the
 `fullsend issues post-comment --tracker jira` subcommand (needed by the
-post-script), you need to build and vendor a custom fullsend binary.
+post-script), you need to vendor a custom-built binary.
+
+Fullsend's CI automatically detects a vendored binary at
+`.fullsend/bin/fullsend` in the enrolled repo and uses it instead of
+downloading a release — no environment variables or workflow changes needed.
 
 ```bash
 # Clone fullsend and build from main (or a branch with Jira CLI support)
@@ -126,23 +130,33 @@ make go-build
 echo "Jira tracker support confirmed in custom build"
 ```
 
-Install the custom binary so it takes precedence:
+Copy the binary into the test repo:
 
 ```bash
-# Option A: replace your PATH fullsend
-sudo cp /tmp/fullsend-build/bin/fullsend /usr/local/bin/fullsend
-
-# Option B: use a local override for CI (if running in Actions)
-# Copy into the test repo and reference via a wrapper workflow step.
+cd /path/to/jira-triage-test
+mkdir -p .fullsend/bin
+cp /tmp/fullsend-build/bin/fullsend .fullsend/bin/fullsend
+chmod +x .fullsend/bin/fullsend
 ```
 
-For the GitHub Actions workflow (Step 4), the poller workflow will need
-this custom binary too. Either:
+Commit and push:
 
-- **Self-hosted runner:** pre-install the custom `fullsend` binary, or
-- **GitHub-hosted runner:** add a build step in the workflow that clones and
-  builds fullsend before calling `fullsend run` (see the pattern in
-  `.github/workflows/functional-tests.yml` in the agents repo, lines 259-280).
+```bash
+git add .fullsend/bin/fullsend
+git commit -m "vendor custom fullsend with Jira support"
+git push
+```
+
+> **How this works:** `action.yml` in fullsend checks for
+> `.fullsend/bin/fullsend` (per-repo) or `bin/fullsend` (per-org) before
+> attempting any release download. When found, the vendored binary takes
+> absolute precedence — it's copied to the runner's temp directory, added
+> to `$GITHUB_PATH`, and used for `fullsend run`. No CI variables need to
+> be set.
+>
+> You can also use `fullsend github setup --vendor --fullsend-source /tmp/fullsend-build`
+> to automate the vendoring and generate a `vendor-manifest.yaml` for
+> cleanup tracking.
 
 ---
 
@@ -223,41 +237,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # -- Build or install fullsend (see Step 3) --
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
+      # The vendored .fullsend/bin/fullsend from Step 3 is picked up
+      # automatically by fullsend's action.yml — no build step needed.
 
-      - name: Build fullsend from source
-        run: |
-          git clone --depth 1 https://github.com/fullsend-ai/fullsend.git /tmp/fullsend-src
-          make -C /tmp/fullsend-src go-build
-          echo "/tmp/fullsend-src/bin" >> "$GITHUB_PATH"
-
-      - name: Install OpenShell
-        run: |
-          eval "$(grep -E '^OPENSHELL_(VERSION|SHA)=' /tmp/fullsend-src/.github/scripts/openshell-version.sh)"
-          /tmp/fullsend-src/.github/scripts/install-openshell.sh
-
-      - name: Install Podman
-        run: |
-          sudo apt-get update && sudo apt-get install -y podman
-          whoami_user="$(whoami)"
-          grep -q "^${whoami_user}:" /etc/subuid || sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "${whoami_user}"
-          podman system migrate
-
-      - name: Start Podman API
-        run: |
-          SOCKET_PATH="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
-          mkdir -p "$(dirname "${SOCKET_PATH}")"
-          podman system service --time=0 "unix://${SOCKET_PATH}" &
-          for i in $(seq 1 30); do
-            [ -S "${SOCKET_PATH}" ] && podman --url "unix://${SOCKET_PATH}" info >/dev/null 2>&1 && break
-            sleep 1
-          done
-
-      # -- Dispatch triage --
       - name: Run triage
         env:
           JIRA_ISSUE_URL: ${{ secrets.JIRA_BASE_URL }}/browse/${{ matrix.issue }}
