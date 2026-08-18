@@ -51,32 +51,59 @@ automatically.
 
 ## Step 2 — Point triage at the `jira` branch implementation
 
-The public mint ships the `main` branch of `fullsend-ai/agents`. The Jira
-triage support lives on the `jira` branch, so you need to override the
-agents ref.
+The default enrollment ships the `main` branch of `fullsend-ai/agents`.
+The Jira triage support lives on the `jira` branch, so you need to
+override the triage harness URL to point at that branch.
 
-Create `.fullsend/config.yaml` in your test repo to pin the agents source
-to the `jira` branch:
+The `agents:` list in `.fullsend/config.yaml` accepts raw GitHub URLs
+pinned with a SHA-256 integrity hash. Replace the default triage entry
+with one pointing at the `jira` branch:
+
+```bash
+# Get the SHA-256 of the harness file on the jira branch
+HARNESS_SHA=$(curl -sfL \
+  "https://raw.githubusercontent.com/fullsend-ai/agents/jira/harness/triage.yaml" \
+  | sha256sum | awk '{print $1}')
+echo "Harness SHA: ${HARNESS_SHA}"
+```
+
+Then update (or create) `.fullsend/config.yaml`:
 
 ```yaml
 # .fullsend/config.yaml
+version: "1"
 agents:
-  repo: fullsend-ai/agents
-  ref: jira          # <-- use the branch with Jira support
+  # Override triage to use the jira branch instead of main
+  - https://raw.githubusercontent.com/fullsend-ai/agents/jira/harness/triage.yaml#sha256=<HARNESS_SHA>
+allowed_remote_resources:
+  - https://raw.githubusercontent.com/fullsend-ai/agents/
 ```
 
+Replace `<HARNESS_SHA>` with the value from the curl command above.
+
 > **How this works:** When fullsend dispatches an agent, it resolves the
-> harness from the agents repo at the specified ref. By pointing `ref:` at
-> `jira`, the dispatch picks up `harness/triage.yaml` with its `forge.jira`
-> block, the Jira skills, scripts, and policies from that branch.
+> harness from URLs in the `agents:` list. On name collision, config-registered
+> agents take precedence over built-in agents, so this entry overrides the
+> stock triage harness. The URL points at the `jira` branch, so dispatch
+> picks up `harness/triage.yaml` with its `forge.jira` block, the Jira
+> skills, scripts, and policies from that branch. The `allowed_remote_resources`
+> entry authorizes fetching from the agents repo.
+
+You can also use the CLI to register the override:
+
+```bash
+fullsend agent add \
+  "https://github.com/fullsend-ai/agents/blob/jira/harness/triage.yaml" \
+  --fullsend-dir .fullsend
+```
+
+This auto-pins the SHA-256 and updates `allowed_remote_resources`.
 
 Commit and push:
 
 ```bash
-mkdir -p .fullsend
-# write the config.yaml above
 git add .fullsend/config.yaml
-git commit -m "pin agents to jira branch for testing"
+git commit -m "pin triage harness to jira branch for testing"
 git push
 ```
 
