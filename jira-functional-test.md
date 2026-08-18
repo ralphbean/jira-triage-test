@@ -162,174 +162,232 @@ git push
 
 ## Step 4 — Install a GitHub Actions workflow to poll Jira and dispatch triage
 
-Since Jira Cloud doesn't natively fire GitHub webhook events, you need a
-polling workflow. Create `.github/workflows/jira-triage-poll.yml`:
+Fullsend already has a built-in Jira poller (`fullsend poll --input-driver
+jira-poll`) that produces dispatch records in the same `NormalizedEvent`
+format used by GitHub and GitLab events. The poller writes a
+`dispatches.json` file, and a shell loop dispatches each record to the
+matching stage workflow via `gh workflow run` — reusing the same reusable
+dispatch infrastructure that all other agents use.
+
+This pattern is documented in fullsend's
+[Jira Integration guide](https://fullsend.sh/docs/guides/user/jira-integration.html)
+(pre-alpha). The workflow below is adapted from that guide.
+
+Create `.github/workflows/fullsend-poll-jira.yml`:
 
 ```yaml
-name: Jira triage poller
+name: fullsend Jira poll
 
 on:
   schedule:
-    # Poll every 15 minutes — adjust as needed
-    - cron: '*/15 * * * *'
-  workflow_dispatch:
-    inputs:
-      jql_override:
-        description: 'JQL query override (optional)'
-        required: false
-        type: string
+    - cron: "*/5 * * * *"  # every 5 minutes
+  workflow_dispatch: {}     # allow manual runs
 
 permissions:
+  actions: write
   contents: read
-  id-token: write
 
 jobs:
-  poll-and-dispatch:
+  poll:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    concurrency:
+      group: fullsend-jira-poll
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
-      - name: Query Jira for new/updated issues
-        id: poll
+      - name: Install fullsend
         env:
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Use the vendored binary if present (Step 3), otherwise download
+          if [[ -x ".fullsend/bin/fullsend" ]]; then
+            sudo cp .fullsend/bin/fullsend /usr/local/bin/fullsend
+          else
+            gh release download --repo fullsend-ai/fullsend \
+              -p 'fullsend_*_linux_amd64.tar.gz' -O - | tar xz
+            sudo mv fullsend /usr/local/bin/
+          fi
+
+      - name: Poll Jira
+        env:
           JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
-          JQL: ${{ inputs.jql_override || secrets.JIRA_JQL }}
+          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
+        run: |
+          fullsend poll \
+            --input-driver jira-poll \
+            --jira-url "${JIRA_BASE_URL}" \
+            --jira-project PROJ \
+            --target-repo "${{ github.repository }}" \
+            --output dispatches.json \
+            --fullsend-dir .fullsend
+
+      - name: Dispatch agent workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
         run: |
           set -euo pipefail
 
-          # Query Jira REST API for issues matching the JQL
-          RESPONSE=$(curl -sf -u "${JIRA_USER_EMAIL}:${JIRA_TOKEN}" \
-            -H "Content-Type: application/json" \
-            "${JIRA_BASE_URL}/rest/api/3/search?jql=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${JQL}'))")&fields=key&maxResults=50")
-
-          # Extract issue keys
-          ISSUES=$(echo "$RESPONSE" | jq -r '.issues[].key')
-
-          if [ -z "$ISSUES" ]; then
-            echo "No issues matched JQL: ${JQL}"
-            echo "issues=" >> "$GITHUB_OUTPUT"
-          else
-            echo "Found issues: $ISSUES"
-            # JSON array for matrix
-            JSON=$(echo "$ISSUES" | jq -Rsc '[split("\n")[] | select(length > 0)]')
-            echo "issues=${JSON}" >> "$GITHUB_OUTPUT"
+          if ! jq -e 'length > 0' dispatches.json > /dev/null 2>&1; then
+            echo "No dispatches to process."
+            exit 0
           fi
 
-      - name: Report poll results
-        if: steps.poll.outputs.issues == ''
-        run: echo "::notice::No Jira issues to triage this cycle."
+          dispatched=0
+          count=$(jq 'length' dispatches.json)
 
-    outputs:
-      issues: ${{ steps.poll.outputs.issues }}
+          for i in $(seq 0 $((count - 1))); do
+            record=$(jq -c ".[$i]" dispatches.json)
+            STAGE=$(echo "$record" | jq -r '.stage')
+            RESOURCE_KEY=$(echo "$record" | jq -r '.resource_key')
+            EVENT_TYPE=$(echo "$record" | jq -r '.event_type')
+            ISSUE_ID=$(echo "$record" | jq -r '.iid // 0')
 
-  triage:
-    needs: poll-and-dispatch
-    if: needs.poll-and-dispatch.outputs.issues != '' && needs.poll-and-dispatch.outputs.issues != '[]'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        issue: ${{ fromJSON(needs.poll-and-dispatch.outputs.issues) }}
-    steps:
-      - uses: actions/checkout@v4
+            # Extract the Jira issue key from the resource key
+            # (e.g. "issue-PROJ-101" -> "PROJ-101").
+            ISSUE_KEY="${RESOURCE_KEY#issue-}"
+            ISSUE_URL="${JIRA_BASE_URL}/browse/${ISSUE_KEY}"
 
-      # The vendored .fullsend/bin/fullsend from Step 3 is picked up
-      # automatically by fullsend's action.yml — no build step needed.
+            # Build a minimal event payload compatible with the scaffold
+            # agent workflows. The concurrency group uses
+            # fromJSON(event_payload).issue.number, so it must stay a
+            # number.
+            EVENT_PAYLOAD=$(jq -nc \
+              --argjson number "$ISSUE_ID" \
+              --arg url "$ISSUE_URL" \
+              '{issue: {number: $number, html_url: $url}}')
 
-      - name: Run triage
-        env:
-          JIRA_ISSUE_URL: ${{ secrets.JIRA_BASE_URL }}/browse/${{ matrix.issue }}
-          JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-          JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-          JIRA_DUPLICATE_TRANSITION: ${{ secrets.JIRA_DUPLICATE_TRANSITION }}
-          JIRA_NOT_PLANNED_TRANSITION: ${{ secrets.JIRA_NOT_PLANNED_TRANSITION }}
-          JIRA_SPLIT_TRANSITION: ${{ secrets.JIRA_SPLIT_TRANSITION }}
-          FULLSEND_FORGE: jira
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS }}
-          ANTHROPIC_VERTEX_PROJECT_ID: ${{ secrets.ANTHROPIC_VERTEX_PROJECT_ID }}
-          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-          CLOUD_ML_REGION: ${{ secrets.CLOUD_ML_REGION }}
-        run: |
-          echo "Triaging ${{ matrix.issue }}"
-          fullsend run triage \
-            --fullsend-dir . \
-            --target-repo . \
-            --forge jira \
-            --output-dir "/tmp/fullsend-${{ matrix.issue }}"
+            # Find the workflow file for this stage by scanning for the
+            # "# fullsend-stage: <stage>" marker in workflow files.
+            WORKFLOW_NAME=""
+            for wf in .github/workflows/*.yml .github/workflows/*.yaml; do
+              [[ -f "$wf" ]] || continue
+              if grep -qxF "# fullsend-stage: ${STAGE}" "$wf"; then
+                WORKFLOW_NAME=$(basename "$wf")
+                break
+              fi
+            done
+            if [[ -z "$WORKFLOW_NAME" ]]; then
+              echo "::warning::No workflow found for stage ${STAGE}, skipping ${RESOURCE_KEY}"
+              continue
+            fi
 
-      - name: Show triage result
-        if: always()
-        run: |
-          RESULT=$(find /tmp/fullsend-${{ matrix.issue }} -name agent-result.json 2>/dev/null | head -1)
-          if [ -n "$RESULT" ]; then
-            echo "::group::Triage result for ${{ matrix.issue }}"
-            jq . "$RESULT"
-            echo "::endgroup::"
-          else
-            echo "::warning::No result file found for ${{ matrix.issue }}"
-          fi
+            echo "Dispatching ${WORKFLOW_NAME} for ${ISSUE_KEY} (${STAGE})"
+            gh workflow run "$WORKFLOW_NAME" \
+              -f event_type="$EVENT_TYPE" \
+              -f source_repo="${{ github.repository }}" \
+              -f event_payload="$EVENT_PAYLOAD"
+
+            dispatched=$((dispatched + 1))
+          done
+
+          echo "::notice::Dispatched ${dispatched} agent workflow(s)"
 ```
+
+Replace `PROJ` with your Jira project key.
+
+> **Why the two-step dance:** Today, `fullsend poll` only produces
+> dispatch records — it doesn't trigger workflows itself. The shell loop
+> that reads `dispatches.json` and calls `gh workflow run` is glue you
+> write yourself. Eventually the poller will gain a built-in output
+> driver that dispatches directly, eliminating this manual wiring. Until
+> then, you connect the two dots in this workflow file.
+>
+> **How this works:** `fullsend poll` queries Jira for recently updated
+> issues, detects new comments and label changes since the last poll, and
+> converts each change to a `NormalizedEvent` — the same forge-neutral
+> event struct that GitHub and GitLab input drivers produce. The dispatch
+> loop then finds the matching stage workflow (by the `# fullsend-stage:`
+> marker that `fullsend github setup` scaffolds into each agent workflow)
+> and triggers it via `gh workflow run`. From that point on, the standard
+> fullsend dispatch pipeline takes over — the same `action.yml`, harness
+> resolution, and agent execution used by GitHub-native events.
+>
+> The poller uses Jira entity properties for coordination state (lock +
+> checkpoint per issue, namespaced by target repo), so only changes newer
+> than the last successful poll trigger dispatch.
+>
+> **Key caveat:** The upstream Jira integration guide notes that built-in
+> agent pre/post scripts don't yet understand Jira-keyed payloads
+> (#2264) — but that's exactly what the `jira` branch (Step 2) adds for
+> triage. The combination of the poller (upstream) + `forge.jira` harness
+> (this branch) is what this test validates end-to-end.
 
 Commit and push:
 
 ```bash
-git add .github/workflows/jira-triage-poll.yml
+git add .github/workflows/fullsend-poll-jira.yml
 git commit -m "add Jira triage poller workflow"
 git push
 ```
 
 ---
 
-## Step 5 — Configure secrets for Jira credentials and JQL
+## Step 5 — Configure secrets, variables, and Jira credentials
 
-In the test repo's GitHub settings, add these repository secrets:
+The poller workflow uses GitHub Actions **secrets** for credentials and
+**variables** for non-sensitive configuration. The harness (`forge.jira`
+in `harness/triage.yaml`) picks up Jira credentials from the runner
+environment, so the same secrets serve both the poller and the agent.
+
+### Secrets (Settings > Secrets and variables > Actions > Secrets)
 
 | Secret | Value | Example |
 |--------|-------|---------|
-| `JIRA_BASE_URL` | Your Jira Cloud site URL | `https://mysite.atlassian.net` |
-| `JIRA_USER_EMAIL` | Email of the Jira API user | `bot@example.com` |
 | `JIRA_TOKEN` | Jira Cloud API token | `ATATT3x...` |
-| `JIRA_JQL` | JQL expression selecting issues to triage | `project = TESTPROJ AND status = Open AND labels not in (triaged, needs-info) AND updated >= -15m ORDER BY updated DESC` |
+| `JIRA_USER_EMAIL` | Email of the Jira API user | `bot@example.com` |
 | `JIRA_DUPLICATE_TRANSITION` | Jira transition name for duplicates | `Duplicate` |
 | `JIRA_NOT_PLANNED_TRANSITION` | Transition name for not-planned | `Won't Do` |
 | `JIRA_SPLIT_TRANSITION` | Transition name for splits | `Done` |
 
-Also add inference credentials (GCP/Vertex AI):
+### Variables (Settings > Secrets and variables > Actions > Variables)
 
-| Secret | Value |
-|--------|-------|
-| `GOOGLE_APPLICATION_CREDENTIALS` | Path or content of GCP service account key |
-| `ANTHROPIC_VERTEX_PROJECT_ID` | GCP project ID with Vertex AI access |
-| `GOOGLE_CLOUD_PROJECT` | Same GCP project ID |
-| `CLOUD_ML_REGION` | Region (e.g. `us-east5` or `global`) |
+| Variable | Value | Example |
+|----------|-------|---------|
+| `JIRA_BASE_URL` | Your Jira Cloud site URL | `https://mysite.atlassian.net` |
 
-Configure secrets via the CLI:
+### Inference credentials
+
+These are provisioned by `fullsend inference provision` (Step 1) — no
+manual secret setup needed. The mint provides scoped tokens at runtime
+via GitHub OIDC.
+
+### Configure via CLI
 
 ```bash
-gh secret set JIRA_BASE_URL --body "https://mysite.atlassian.net"
-gh secret set JIRA_USER_EMAIL --body "bot@example.com"
+# Secrets
 gh secret set JIRA_TOKEN --body "<your-api-token>"
-gh secret set JIRA_JQL --body "project = TESTPROJ AND status = Open AND updated >= -15m"
+gh secret set JIRA_USER_EMAIL --body "bot@example.com"
 gh secret set JIRA_DUPLICATE_TRANSITION --body "Duplicate"
 gh secret set JIRA_NOT_PLANNED_TRANSITION --body "Won't Do"
 gh secret set JIRA_SPLIT_TRANSITION --body "Done"
-# ... plus GCP secrets
+
+# Variables
+gh variable set JIRA_BASE_URL --body "https://mysite.atlassian.net"
 ```
 
-**Tuning the JQL expression:**
+### Custom JQL (optional)
 
-The JQL should return only issues that haven't already been triaged and were
-recently updated, to avoid re-triaging the entire backlog on every poll.
-Adjust the `updated >= -15m` window to match your cron interval. Examples:
+The poller defaults to searching all non-done issues in the project,
+ordered by most recently updated. To narrow the scope, edit the
+`fullsend poll` invocation in the workflow to add `--jql`:
 
-- Poll every 15 min: `updated >= -15m`
-- Poll hourly: `updated >= -60m`
-- First run (backfill): remove the `updated` clause, then add it back
+```bash
+fullsend poll \
+  --input-driver jira-poll \
+  --jira-url "${JIRA_BASE_URL}" \
+  --jira-project PROJ \
+  --jql 'project = PROJ AND labels = "fullsend" AND statusCategory != Done ORDER BY updated DESC' \
+  --target-repo "${{ github.repository }}" \
+  --output dispatches.json \
+  --fullsend-dir .fullsend
+```
+
+`--jira-project` is required alongside `--jql` if your project uses
+slash commands — without it, all actors resolve to `external` and every
+`/fs-*` command silently fails the role gate.
 
 ---
 
