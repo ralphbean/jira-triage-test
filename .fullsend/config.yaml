@@ -1,0 +1,24 @@
+# fullsend per-repo configuration
+# https://github.com/fullsend-ai/fullsend
+#
+# This file configures fullsend for per-repo installation mode.
+# See ADR 0033 for details.
+version: "1"
+roles:
+    - triage
+    - coder
+    - review
+    - fix
+    - retro
+    - prioritize
+allowed_remote_resources:
+    - https://raw.githubusercontent.com/fullsend-ai/fullsend/
+    - https://raw.githubusercontent.com/fullsend-ai/agents/
+create_issues:
+    allow_targets:
+        repos:
+            - ralphbean/jira-triage-test
+            - fullsend-ai/fullsend
+inference:
+    project: it-gcp-konflux-dev-fullsend
+    wif_provider: projects/855403973659/locations/global/workloadIdentityPools/fullsend-inference/providers/gh-ralphbean-jira-triage-test
