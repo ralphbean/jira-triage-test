@@ -1,8 +1,8 @@
 # Jira Triage Functional Test Plan
 
 End-to-end validation that a fresh repo, enrolled in fullsend with Jira
-support from the `jira` branch, can poll a Jira Cloud project and dispatch
-triage against a real issue.
+support (merged to `fullsend-ai/agents` main via PR #827), can poll a Jira
+Cloud project and dispatch triage against a real issue.
 
 ## Prerequisites
 
@@ -49,41 +49,28 @@ automatically.
 
 ---
 
-## Step 2 — Point triage at the `jira` branch implementation
+## Step 2 — Configure the triage harness with Jira support
 
-The default enrollment ships the `main` branch of `fullsend-ai/agents`.
-The Jira triage support lives on the `jira` branch, so you need to
-override the triage harness URL to point at that branch. You also need
-to configure Jira workflow transition names — these are project-specific
-configuration, not credentials, so they belong in the harness via
-`base:` composition rather than in CI secrets.
+Jira triage support shipped in `fullsend-ai/agents` main via
+[PR #827](https://github.com/fullsend-ai/agents/pull/827). The default
+enrollment already points at `main`, so no branch override is needed. You
+do need to configure Jira workflow transition names and add a CEL `trigger:`
+expression — both via a local harness override using `base:` composition.
 
-### Register the upstream harness and pin the SHA
-
-The `agents:` list in `.fullsend/config.yaml` accepts raw GitHub URLs
-pinned with a SHA-256 integrity hash:
-
-```bash
-# Pin the jira branch harness via CLI (auto-computes SHA-256)
-fullsend agent add \
-  "https://github.com/fullsend-ai/agents/blob/jira/harness/triage.yaml" \
-  --fullsend-dir .fullsend
-```
-
-Or manually:
+### Get the current harness SHA
 
 ```bash
 HARNESS_SHA=$(curl -sfL \
-  "https://raw.githubusercontent.com/fullsend-ai/agents/jira/harness/triage.yaml" \
+  "https://raw.githubusercontent.com/fullsend-ai/agents/main/harness/triage.yaml" \
   | sha256sum | awk '{print $1}')
 echo "Harness SHA: ${HARNESS_SHA}"
 ```
 
-### Jira transition defaults and CEL trigger
+### Create the local harness override
 
 Create `.fullsend/harness/triage.yaml` with three things:
 
-1. `base:` — inherits the full upstream harness from the `jira` branch
+1. `base:` — inherits the full upstream harness from `main`
 2. `trigger:` — CEL expression that the poll binary evaluates to decide
    whether to dispatch triage for a given Jira event. Without this field
    the harness is not considered a dispatch candidate and the poller
@@ -93,7 +80,7 @@ Create `.fullsend/harness/triage.yaml` with three things:
 
 ```yaml
 # .fullsend/harness/triage.yaml
-base: https://raw.githubusercontent.com/fullsend-ai/agents/jira/harness/triage.yaml#sha256=<HARNESS_SHA>
+base: https://raw.githubusercontent.com/fullsend-ai/agents/main/harness/triage.yaml#sha256=<HARNESS_SHA>
 
 trigger: >
   event.source.system == "jira" && event.entity.kind == "work_item"
@@ -127,7 +114,7 @@ Then update `.fullsend/config.yaml` to point at the local harness:
 # .fullsend/config.yaml
 version: "1"
 agents:
-  # Local harness that inherits from the jira branch via base: composition
+  # Local harness that inherits from main via base: composition
   - name: triage
     source: harness/triage.yaml
 allowed_remote_resources:
@@ -136,16 +123,15 @@ allowed_remote_resources:
 
 > **How this works:** `source: harness/triage.yaml` resolves relative to
 > the `.fullsend/` directory. That file's `base:` pulls in the full upstream
-> harness from the `jira` branch — `forge.jira` block, Jira skills,
-> scripts, and policies — then the local `trigger:` and
-> `forge.jira.env.runner` values merge on top (child wins for env map
-> keys).
+> harness — `forge.jira` block, Jira skills, scripts, and policies — then
+> the local `trigger:` and `forge.jira.env.runner` values merge on top
+> (child wins for env map keys).
 
 Commit and push:
 
 ```bash
 git add .fullsend/config.yaml .fullsend/harness/triage.yaml
-git commit -m "pin triage harness to jira branch with CEL trigger"
+git commit -m "configure triage harness for Jira with CEL trigger"
 git push
 ```
 
