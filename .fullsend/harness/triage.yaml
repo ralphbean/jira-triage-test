@@ -4,6 +4,12 @@ base: https://raw.githubusercontent.com/fullsend-ai/agents/main/harness/triage.y
 trigger: >
   event.source.system == "jira" && event.entity.kind == "work_item"
 
+env:
+  runner:
+    FULLSEND_TRACKER: "jira"
+  sandbox:
+    FULLSEND_TRACKER: "jira"
+
 forge:
   jira:
     env:
