@@ -11,6 +11,11 @@ roles:
     - fix
     - retro
     - prioritize
+
+# There can be only one. For now.
+# This will be replaced by https://github.com/fullsend-ai/fullsend/pull/6237
+forge: jira
+
 agents:
     - name: triage
       source: harness/triage.yaml
