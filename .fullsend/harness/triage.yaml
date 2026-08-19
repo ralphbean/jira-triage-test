@@ -4,15 +4,10 @@ base: https://raw.githubusercontent.com/fullsend-ai/agents/main/harness/triage.y
 trigger: >
   event.source.system == "jira" && event.entity.kind == "work_item"
 
-jira:
-  env:
-    runner:
-      FULLSEND_TRACKER: "jira"
-      JIRA_DUPLICATE_TRANSITION: "Duplicate"
-      JIRA_NOT_PLANNED_TRANSITION: "Won't Do"
-      JIRA_SPLIT_TRANSITION: "Done"
-    sandbox:
-      FULLSEND_TRACKER: "jira"
-      JIRA_DUPLICATE_TRANSITION: "Duplicate"
-      JIRA_NOT_PLANNED_TRANSITION: "Won't Do"
-      JIRA_SPLIT_TRANSITION: "Done"
+forge:
+  jira:
+    env:
+      runner:
+        JIRA_DUPLICATE_TRANSITION: "Duplicate"
+        JIRA_NOT_PLANNED_TRANSITION: "Won't Do"
+        JIRA_SPLIT_TRANSITION: "Done"
