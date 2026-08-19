@@ -9,7 +9,7 @@ on:
 # (CEL trigger evaluation for jira-poll). Update when merged to main.
 # Branch: agent/6339-cel-trigger-jira-poll
 env:
-  FULLSEND_REF: c1c02086a7d8fc944b7553aac6eebcfad3c7ae1c
+  FULLSEND_REF: 600c342dfbdd28a52f85960f258b0fae0d98d1f5
 
 permissions:
   actions: write
