@@ -217,7 +217,7 @@ commit to the branch that carries PR #6340. Update it when that PR merges to
 The workflow is at `.github/workflows/fullsend-poll-jira.yaml` in this repo.
 Replace `KONFLUX` and the `--jql` filter with your project key and query.
 
-The workflow passes JIRA secrets to `reusable-harness-run.yml`:
+The workflow passes JIRA credentials to `reusable-harness-run.yml`:
 
 ```yaml
 secrets:
@@ -227,10 +227,13 @@ secrets:
   OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
   JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
   JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-  JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+  JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}  # Passed as secret but sourced from variable
 ```
 
-These are exposed as environment variables to pre-scripts and the agent runtime.
+Note: `JIRA_BASE_URL` is stored as a **variable** (not secret) to avoid
+GitHub's secret scanning from blocking the matrix output (which contains
+issue URLs). It's passed as a secret input to the reusable workflow so
+pre-scripts can access it via the environment.
 
 Commit and push:
 
@@ -242,12 +245,12 @@ git push
 
 ---
 
-## Step 5 — Configure secrets and Jira credentials
+## Step 5 — Configure secrets, variables, and Jira credentials
 
-The poller workflow uses GitHub Actions **secrets** for Jira credentials.
-The harness (`forge.jira` in `harness/triage.yaml`) picks up these
-credentials from the runner environment, so the same secrets serve both
-the poller and the agent.
+The poller workflow uses GitHub Actions **secrets** for sensitive Jira
+credentials and **variables** for non-sensitive configuration. The harness
+(`forge.jira` in `harness/triage.yaml`) picks up these values from the
+runner environment, so they serve both the poller and the agent.
 
 ### Secrets (Settings > Secrets and variables > Actions > Secrets)
 
@@ -255,6 +258,11 @@ the poller and the agent.
 |--------|-------|---------|
 | `JIRA_TOKEN` | Jira Cloud API token | `ATATT3x...` |
 | `JIRA_USER_EMAIL` | Email of the Jira API user | `bot@example.com` |
+
+### Variables (Settings > Secrets and variables > Actions > Variables)
+
+| Variable | Value | Example |
+|----------|-------|---------|
 | `JIRA_BASE_URL` | Your Jira Cloud site URL | `https://mysite.atlassian.net` |
 
 ### Inference credentials
@@ -269,7 +277,9 @@ via GitHub OIDC.
 # Secrets
 gh secret set JIRA_TOKEN --body "<your-api-token>"
 gh secret set JIRA_USER_EMAIL --body "bot@example.com"
-gh secret set JIRA_BASE_URL --body "https://mysite.atlassian.net"
+
+# Variables
+gh variable set JIRA_BASE_URL --body "https://mysite.atlassian.net"
 ```
 
 Jira transition names (`JIRA_DUPLICATE_TRANSITION`, etc.) are configured

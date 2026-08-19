@@ -46,7 +46,7 @@ jobs:
         env:
           JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
           JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
           TARGET_REPO: ${{ github.repository }}
         run: |
           fullsend poll \
@@ -101,4 +101,4 @@ jobs:
       OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
       JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
       JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
