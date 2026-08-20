@@ -6,8 +6,10 @@ trigger: >
 
 env:
   runner:
+    FULLSEND_FORGE: "jira"
     FULLSEND_TRACKER: "jira"
   sandbox:
+    FULLSEND_FORGE: "jira"
     FULLSEND_TRACKER: "jira"
 
 forge:
