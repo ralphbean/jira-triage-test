@@ -217,7 +217,7 @@ commit to the branch that carries PR #6340. Update it when that PR merges to
 The workflow is at `.github/workflows/fullsend-poll-jira.yaml` in this repo.
 Replace `KONFLUX` and the `--jql` filter with your project key and query.
 
-The workflow passes JIRA credentials to `reusable-harness-run.yml`:
+The workflow passes JIRA secrets to `reusable-harness-run.yml`:
 
 ```yaml
 secrets:
@@ -227,13 +227,12 @@ secrets:
   OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
   JIRA_TOKEN: ${{ secrets.JIRA_TOKEN }}
   JIRA_USER_EMAIL: ${{ secrets.JIRA_USER_EMAIL }}
-  JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}  # Passed as secret but sourced from variable
 ```
 
-Note: `JIRA_BASE_URL` is stored as a **variable** (not secret) to avoid
-GitHub's secret scanning from blocking the matrix output (which contains
-issue URLs). It's passed as a secret input to the reusable workflow so
-pre-scripts can access it via the environment.
+Note: `JIRA_BASE_URL` is accessed directly by the reusable workflow from
+the caller's `vars` context (no need to pass it explicitly). It's stored
+as a variable to avoid GitHub's secret scanning from blocking the matrix
+output (which contains issue URLs with the base URL).
 
 Commit and push:
 
