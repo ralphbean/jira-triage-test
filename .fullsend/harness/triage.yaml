@@ -17,3 +17,10 @@ forge:
         JIRA_DUPLICATE_TRANSITION: "Duplicate"
         JIRA_NOT_PLANNED_TRANSITION: "Won't Do"
         JIRA_SPLIT_TRANSITION: "Done"
+        JIRA_TOKEN: "${JIRA_TOKEN}"
+        JIRA_USER_EMAIL: "${JIRA_USER_EMAIL}"
+        JIRA_BASE_URL: "${JIRA_BASE_URL}"
+      sandbox:
+        JIRA_TOKEN: "${JIRA_TOKEN}"
+        JIRA_USER_EMAIL: "${JIRA_USER_EMAIL}"
+        JIRA_BASE_URL: "${JIRA_BASE_URL}"
