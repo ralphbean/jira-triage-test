@@ -2,7 +2,7 @@ name: fullsend Jira poll
 
 on:
   schedule:
-    - cron: "*/5 * * * *"  # every 5 minutes
+    - cron: "*/30 * * * *"  # every 30 minutes
   workflow_dispatch: {}     # allow manual runs
 
 # Pinned to the fullsend-ai/fullsend commit that carries PR #6340
