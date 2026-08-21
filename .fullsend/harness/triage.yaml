@@ -4,6 +4,8 @@ base: https://raw.githubusercontent.com/fullsend-ai/agents/main/harness/triage.y
 trigger: >
   event.source.system == "jira" && event.entity.kind == "work_item"
 
+allowed_remote_resources: [https://raw.githubusercontent.com/fullsend-ai/agents]
+
 policy: https://raw.githubusercontent.com/fullsend-ai/agents/main/policies/jira/triage.yaml#sha256=9e2eea15643e40d04a7028f6f3e28441ab81ced96a1f8ab5b4ea3afd0fcf6529
 
 env:
