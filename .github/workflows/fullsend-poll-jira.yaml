@@ -5,12 +5,6 @@ on:
     - cron: "*/30 * * * *"  # every 30 minutes
   workflow_dispatch: {}     # allow manual runs
 
-# Pinned to the fullsend-ai/fullsend commit that carries PR #6340
-# (CEL trigger evaluation for jira-poll). Update when merged to main.
-# Branch: agent/6339-cel-trigger-jira-poll
-env:
-  FULLSEND_REF: 600c342dfbdd28a52f85960f258b0fae0d98d1f5
-
 permissions:
   actions: write
   contents: read
@@ -76,24 +70,21 @@ jobs:
             echo "${DELIM}"
           } >> "${GITHUB_OUTPUT}"
 
-  harness-run:
-    # Use the new reusable harness-run workflow from fullsend-ai/fullsend.
-    # The poll job above replaces harness-dispatch: the CEL trigger matching is
-    # done by `fullsend poll` (PR #6340) and the matrix is pre-built from
-    # dispatches.json. We skip harness-dispatch entirely and feed the matrix
-    # directly to the reusable harness-run workflow.
+  harness:
+    # Use reusable-dispatch.yml with pre-computed matrix input.
+    # The poll job above replaces both route and harness-dispatch: the CEL
+    # trigger matching is done by `fullsend poll` (PR #6340) and the matrix
+    # is pre-built from dispatches.json. When matrix is provided, reusable-dispatch
+    # skips routing/dispatch and goes directly to harness-run (PR #6455).
     #
     # Resolves fullsend-ai/fullsend#6347
-    name: Harness run
+    name: Harness
     needs: poll
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-harness-run.yml@extract-harness-run
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-dispatch.yml@reusable-dispatch-precomputed-matrix
     with:
       matrix: ${{ needs.poll.outputs.matrix }}
-      install_mode: per-repo
       mint_url: ${{ vars.FULLSEND_MINT_URL }}
       gcp_region: ${{ vars.FULLSEND_GCP_REGION }}
-      fullsend_version: ${{ vars.FULLSEND_REF }}
-      runner_image: ubuntu-24.04
     secrets:
       FULLSEND_GCP_WIF_PROVIDER: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
       FULLSEND_GCP_PROJECT_ID: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}

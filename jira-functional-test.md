@@ -201,23 +201,20 @@ The poll workflow has two jobs:
 
 1. **`poll`** — runs `fullsend poll`, converts `dispatches.json` to a GHA
    matrix, and outputs it.
-2. **`harness-run`** — consumes the matrix via
-   `fullsend-ai/fullsend/.github/workflows/reusable-harness-run.yml`, passing
-   the JIRA secrets so they're available to pre-scripts and the agent
-   environment.
+2. **`harness`** — consumes the matrix via
+   `fullsend-ai/fullsend/.github/workflows/reusable-dispatch.yml`, passing
+   the pre-computed matrix and JIRA secrets. When a matrix is provided,
+   `reusable-dispatch.yml` skips routing and dispatch, going directly to
+   harness-run (PR #6455).
 
 No per-stage `triage.yaml` workflow is needed. The repo's `fullsend.yaml`
 shim (which routes GitHub events via `workflow_call`) is left untouched; the
 Jira poll path is entirely self-contained in `fullsend-poll-jira.yaml`.
 
-`FULLSEND_REF` at the top of the workflow pins the `fullsend-ai/fullsend`
-commit to the branch that carries PR #6340. Update it when that PR merges to
-`main`.
-
 The workflow is at `.github/workflows/fullsend-poll-jira.yaml` in this repo.
 Replace `KONFLUX` and the `--jql` filter with your project key and query.
 
-The workflow passes JIRA secrets to `reusable-harness-run.yml`:
+The workflow passes JIRA secrets to `reusable-dispatch.yml`:
 
 ```yaml
 secrets:
@@ -233,6 +230,11 @@ Note: `JIRA_BASE_URL` is accessed directly by the reusable workflow from
 the caller's `vars` context (no need to pass it explicitly). It's stored
 as a variable to avoid GitHub's secret scanning from blocking the matrix
 output (which contains issue URLs with the base URL).
+
+The workflow uses `reusable-dispatch.yml@reusable-dispatch-precomputed-matrix`
+(PR #6455) which accepts a pre-computed matrix input. This approach maintains
+ADR 62's inlining decision while enabling external pollers to reuse the harness
+infrastructure without duplicating workflow code or introducing version skew.
 
 Commit and push:
 
