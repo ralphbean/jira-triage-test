@@ -7,9 +7,10 @@ on:
 
 permissions:
   actions: write
-  contents: read
+  contents: write
   id-token: write
   issues: write
+  packages: read
   pull-requests: write
 
 jobs:
@@ -85,6 +86,7 @@ jobs:
       matrix: ${{ needs.poll.outputs.matrix }}
       mint_url: ${{ vars.FULLSEND_MINT_URL }}
       gcp_region: ${{ vars.FULLSEND_GCP_REGION }}
+      jira_base_url: ${{ vars.JIRA_BASE_URL }}
     secrets:
       FULLSEND_GCP_WIF_PROVIDER: ${{ secrets.FULLSEND_GCP_WIF_PROVIDER }}
       FULLSEND_GCP_PROJECT_ID: ${{ secrets.FULLSEND_GCP_PROJECT_ID }}
