@@ -7,9 +7,10 @@ on:
 
 permissions:
   actions: write
-  contents: read
+  contents: write
   id-token: write
   issues: write
+  packages: read
   pull-requests: write
 
 jobs:
@@ -80,13 +81,6 @@ jobs:
     # Resolves fullsend-ai/fullsend#6347
     name: Harness
     needs: poll
-    permissions:
-      actions: write
-      contents: write
-      id-token: write
-      issues: write
-      packages: read
-      pull-requests: write
     uses: fullsend-ai/fullsend/.github/workflows/reusable-dispatch.yml@reusable-dispatch-precomputed-matrix
     with:
       matrix: ${{ needs.poll.outputs.matrix }}
