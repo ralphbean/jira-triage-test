@@ -6,8 +6,6 @@ trigger: >
 
 allowed_remote_resources: [https://raw.githubusercontent.com/fullsend-ai/agents/]
 
-policy: https://raw.githubusercontent.com/fullsend-ai/agents/1013-port-triage-to-overlays/policies/jira/triage.yaml#sha256=12c62f20251307ddc5e6e26e7fa05ead13b378fbe88b52706e0b6b3faef2675a
-
 env:
   runner:
     JIRA_DUPLICATE_TRANSITION: "Duplicate"
