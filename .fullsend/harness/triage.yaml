@@ -5,9 +5,3 @@ trigger: >
   event.source.system == "jira" && event.entity.kind == "work_item"
 
 allowed_remote_resources: [https://raw.githubusercontent.com/fullsend-ai/agents/]
-
-env:
-  runner:
-    JIRA_DUPLICATE_TRANSITION: "Duplicate"
-    JIRA_NOT_PLANNED_TRANSITION: "Won't Do"
-    JIRA_SPLIT_TRANSITION: "Obsolete"
