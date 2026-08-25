@@ -23,6 +23,8 @@ create_issues:
             - ralphbean/jira-triage-test
             - fullsend-ai/fullsend
 
+forge: jira
+
 status_notifications:
   reaction:
     start: enabled
