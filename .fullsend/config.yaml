@@ -22,6 +22,12 @@ create_issues:
         repos:
             - ralphbean/jira-triage-test
             - fullsend-ai/fullsend
+
+status_notifications:
+  reaction:
+    start: enabled
+    completed: enabled
+
 inference:
     project: it-gcp-konflux-dev-fullsend
     wif_provider: projects/855403973659/locations/global/workloadIdentityPools/fullsend-inference/providers/gh-ralphbean-jira-triage-test
