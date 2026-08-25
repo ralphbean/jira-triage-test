@@ -1,12 +1,12 @@
 # .fullsend/harness/triage.yaml
-base: https://raw.githubusercontent.com/fullsend-ai/agents/agent/1013-port-triage-to-overlays/harness/triage.yaml#sha256=11b7fae6d1e02d2914d4a597dd58ffcbc85b21d378cc6618636d98d6c53dc652
+base: https://raw.githubusercontent.com/fullsend-ai/agents/agent%2f1013-port-triage-to-overlays/harness/triage.yaml#sha256=11b7fae6d1e02d2914d4a597dd58ffcbc85b21d378cc6618636d98d6c53dc652
 
 trigger: >
   event.source.system == "jira" && event.entity.kind == "work_item"
 
 allowed_remote_resources: [https://raw.githubusercontent.com/fullsend-ai/agents/]
 
-policy: https://raw.githubusercontent.com/fullsend-ai/agents/agent/1013-port-triage-to-overlays/policies/jira/triage.yaml#sha256=12c62f20251307ddc5e6e26e7fa05ead13b378fbe88b52706e0b6b3faef2675a
+policy: https://raw.githubusercontent.com/fullsend-ai/agents/agent%2f1013-port-triage-to-overlays/policies/jira/triage.yaml#sha256=12c62f20251307ddc5e6e26e7fa05ead13b378fbe88b52706e0b6b3faef2675a
 
 env:
   runner:
