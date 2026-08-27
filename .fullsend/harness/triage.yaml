@@ -6,9 +6,11 @@ trigger: >
 
 allowed_remote_resources: [https://raw.githubusercontent.com/fullsend-ai/agents/]
 
-env:
-  runner:
-    # KONFLUX doesn't have special transitions - just "closed"
-    JIRA_DUPLICATE_TRANSITION: Closed
-    JIRA_NOT_PLANNED_TRANSITION: Closed
-    JIRA_SPLIT_TRANSITION: Closed
+overlays:
+  - when: 'runtime.forge == "jira"'
+    env:
+      runner:
+        # KONFLUX doesn't have special transitions - just "closed"
+        JIRA_DUPLICATE_TRANSITION: Closed
+        JIRA_NOT_PLANNED_TRANSITION: Closed
+        JIRA_SPLIT_TRANSITION: Closed
