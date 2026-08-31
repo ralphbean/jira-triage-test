@@ -1,5 +1,5 @@
 # .fullsend/harness/triage.yaml
-base: https://raw.githubusercontent.com/fullsend-ai/agents/1013-port-triage-to-overlays/harness/triage.yaml#sha256=a6ec66f32361c0d7977d0ddbc2c05f19bab9bc2f04318a2efe4b0b59e078cd3d
+base: https://raw.githubusercontent.com/fullsend-ai/agents/agent-1073-jira-component-assignment/harness/triage.yaml#sha256=b5bf2caee6bfb12cb592205b9ba07bfc25bb6b57c09277fc2e1777e31ae2b443
 
 trigger: >
   event.source.system == "jira" && event.entity.kind == "work_item"
