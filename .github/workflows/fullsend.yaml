@@ -45,7 +45,7 @@ jobs:
       issues: write
       packages: read
       pull-requests: write
-    uses: fullsend-ai/fullsend/.github/workflows/reusable-dispatch.yml@main
+    uses: fullsend-ai/fullsend/.github/workflows/reusable-dispatch.yml@agent/6767-tracker-status-routing
     with:
       event_action: ${{ github.event.action }}
       install_mode: per-repo
